@@ -124,20 +124,28 @@ class BranchedAtom(BigSMILESbase, GenerationBase):
 
     def _generate_partial_graph(self) -> _PartialGeneratingGraph:
         partial_graph = self._atom_stand_in._generate_partial_graph()
+        # SMILES neighbour order (what @/@@ refers to): the preceding atom (slot 0, the left
+        # half bond), an implicit H (slot 1), then ring bonds, branches and the following atom
+        # in text order.  Every right half bond gets its own slot.
+        slot = 2
         # Adding ring bonds
-        for ring_idx, half_bond in product(self._ring_bonds, partial_graph.right_half_bonds):
-            partial_graph.add_ring_bond(ring_idx, half_bond)
+        for ring_idx in self._ring_bonds:
+            for half_bond in partial_graph.right_half_bonds:
+                partial_graph.add_ring_bond(ring_idx, half_bond.with_order(slot))
+            slot += 1
 
         # Adding branches
         for branch in self._branches:
             branch_partial_graph = branch._generate_partial_graph()
-            bonds_to_add = product(partial_graph.right_half_bonds, branch_partial_graph.left_half_bonds)
+            bonds_to_add = product([hb.with_order(slot) for hb in partial_graph.right_half_bonds], branch_partial_graph.left_half_bonds)
+            slot += 1
             # Branches have empty right hand half bonds, so only resetting left ones.
             branch_partial_graph.left_half_bonds = []
 
             partial_graph.merge(branch_partial_graph, bonds_to_add)
 
         # Not resetting right bonds, because this can bond to more on the right (not a branch)
+        partial_graph.right_half_bonds = [hb.with_order(slot) for hb in partial_graph.right_half_bonds]
         return partial_graph
 
     @property

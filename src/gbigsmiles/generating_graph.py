@@ -30,6 +30,12 @@ _AROMATIC_NAME = "aromatic"
 _BOND_TYPE_NAME = "bond_type"
 _BOND_DIR_NAME = "bond_dir"
 _CHIRAL_NAME = "chiral"
+# Edge attribute: {node_id: slot} giving, for each end atom, the position of this bond in
+# that atom's SMILES neighbour order (0 = preceding atom, 1 = implicit H, 2.. = ring bonds,
+# branches and the following atom in text order).  Chirality (@/@@) is defined relative to
+# that order, so an RDKit molecule built with bonds in any other order needs it to set the
+# tag correctly (see nx_rdkit_mol).
+_NBR_ORDER_NAME = "nbr_order"
 _NON_STATIC_ATTR = (_STOCHASTIC_NAME, _TERMINATION_NAME, _TRANSITION_NAME)
 
 
@@ -44,10 +50,14 @@ def is_static_edge(edge_data):
 
 
 class _HalfBond:
-    def __init__(self, node, node_id: str, bond_attributes: dict):
+    def __init__(self, node, node_id: str, bond_attributes: dict, order: int | None = None):
         self.node = node
         self.node_id = node_id
         self.bond_attributes = bond_attributes
+        self.order = order  # slot of this half bond in the node's SMILES neighbour order
+
+    def with_order(self, order: int) -> "_HalfBond":
+        return _HalfBond(self.node, self.node_id, dict(self.bond_attributes), order)
 
     def __str__(self):
         return f"HalfBond({str(self.node)}, {self.node_id}, {self.bond_attributes})"
@@ -99,6 +109,10 @@ class _PartialGeneratingGraph:
             raise ValueError(overlapping_keys)
 
         new_bond_attributes = self_half_bond_edge.bond_attributes | other_half_bond_edge.bond_attributes
+        new_bond_attributes[_NBR_ORDER_NAME] = {
+            self_half_bond_edge.node_id: self_half_bond_edge.order,
+            other_half_bond_edge.node_id: other_half_bond_edge.order,
+        }
         self.g.add_edge(self_half_bond_edge.node_id, other_half_bond_edge.node_id, **new_bond_attributes)
 
     def add_ring_bond(self, ring_bond, half_bond: _HalfBond) -> bool:
@@ -292,10 +306,16 @@ class GeneratingGraph:
                                 node_path.append(node)
                 self.node_path = node_path
                 self.data_path = data_path
-                self._weight, self._combined_attr = self.create_combined_attr()
+                self._weight, self._combined_attr = self.create_combined_attr() if self.only_bond_descriptors else (0.0, None)
 
             def create_combined_attr(self) -> dict | None:
                 data = {}
+                first, last = self.node_path[0], self.node_path[-1]
+                if first != last:  # a one-atom repeat unit bonding to itself cannot be told apart by node
+                    data[_NBR_ORDER_NAME] = {
+                        first: self.data_path[0].get(_NBR_ORDER_NAME, {}).get(first),
+                        last: self.data_path[-1].get(_NBR_ORDER_NAME, {}).get(last),
+                    }
                 weight = 1.0
                 weight_type_list = []
                 non_static_attribute_list = list(_NON_STATIC_ATTR)

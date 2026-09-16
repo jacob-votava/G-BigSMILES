@@ -1,4 +1,6 @@
 import numpy as np
+import re
+
 import pytest
 
 import gbigsmiles
@@ -114,3 +116,54 @@ def test_polymer_chiral_center_syndiotactic_polypropylene():
         assert chiral_atoms[i].GetChiralTag() != chiral_atoms[i + 1].GetChiralTag(), "Stereocenters should alternate configuration (syndiotactic)"
   
 
+
+
+# --- chirality is defined by SMILES neighbour order, not by graph bond order --------------
+# The RDKit molecule is assembled with bonds in graph order; @/@@ must be re-expressed for
+# that order (edge attribute ``nbr_order``), or a stereocentre bonded to a ring closure or a
+# bond descriptor comes out inverted, depending on how the repeat unit happened to be spelled.
+
+_STEREO_UNITS = [
+    "[<][C@@H]1C[C@H]([>])C1",        # poly(1,3-cyclobutylene): the reported case
+    "[<]C1CC[C@H](O)C[C@@H]1[>]",     # junction centre carries the ring closure
+    "[<]C[C@H](C)[>]",                # i-PP
+    "[<]O[C@@H](C)C(=O)[>]",          # PLLA
+]
+
+
+def _textual_chain(unit: str, n: int) -> str:
+    """The n-mer written by substituting the descriptors textually ([<] is the preceding
+    atom, [>] the following unit), ring digits renumbered per unit.  No atom's SMILES
+    neighbour order changes, so the chain's @/@@ are the ground truth."""
+    def unit_i(i):
+        text = re.sub(r"(?<=[\]A-Za-z])(\d)", lambda m: f"%{10 * (i + 1) + int(m.group(1))}", unit)
+        return text.replace("[<]", "").replace("[>]", unit_i(i + 1) if i + 1 < n else "[H]")
+    return "[H]" + unit_i(0)
+
+
+def _canonical_chain(text, seed=0):
+    Chem, mol = _rdkit_mol_from_bigsmiles(text, seed=seed)
+    return Chem, Chem.RemoveHs(mol)
+
+
+@pytest.mark.parametrize("unit", _STEREO_UNITS)
+def test_chirality_matches_textual_substitution(unit):
+    Chem, chain = _canonical_chain(f"[H]{{[>]{unit}[<]}}|uniform(400,400)|[H]")
+    n = chain.GetNumHeavyAtoms() // Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]")).GetNumHeavyAtoms()
+    reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
+    assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
+@pytest.mark.parametrize("unit", _STEREO_UNITS)
+def test_chirality_independent_of_repeat_unit_spelling(unit):
+    # Every SMILES spelling of the same repeat unit (rooted at each atom in turn) must give
+    # the same chain: before the fix, spellings differed in which centres came out inverted.
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]"))
+    spellings = {Chem.MolToSmiles(mol, rootedAtAtom=r, canonical=False) for r in range(mol.GetNumAtoms())}
+    chains = set()
+    for spelling in spellings:
+        spelling = spelling.replace("[1*]", "[<]").replace("[2*]", "[>]")
+        chains.add(Chem.MolToSmiles(_canonical_chain(f"[H]{{[>]{spelling}[<]}}|uniform(400,400)|[H]")[1]))
+    assert len(spellings) > 1 and len(chains) == 1

@@ -9,7 +9,11 @@ def node_match(node1_attrs, node2_attrs):
 
 # Define a custom edge matcher
 def edge_match(edge1_attrs, edge2_attrs):
-    return edge1_attrs == edge2_attrs
+    # `nbr_order` maps node ids (fresh uuids on every parse) to SMILES neighbour slots, so it
+    # can never equal a stored copy; its effect is validated through the RDKit stereo tests.
+    # (for a multigraph the matcher receives {edge_key: attribute dict})
+    strip = lambda edges: {key: {k: v for k, v in attrs.items() if k != "nbr_order"} for key, attrs in edges.items()}
+    return strip(edge1_attrs) == strip(edge2_attrs)
 
 
 def test_generating_ml_graph_generation(graph_validation_dict):
