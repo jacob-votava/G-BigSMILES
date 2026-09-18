@@ -159,11 +159,9 @@ class GeneratingGraph:
     def _create_bd_idx_set(graph):
         from .bond import BondDescriptor
 
-        bd_idx_set = set()
-        for node_idx, data in graph.nodes(data=True):
-            if isinstance(data["obj"], BondDescriptor):
-                bd_idx_set.add(node_idx)
-        return bd_idx_set
+        # Insertion-ordered (a dict, not a set): node ids are random uuids, and edges are
+        # added while iterating this, so set order would make sampling irreproducible.
+        return dict.fromkeys(n for n, data in graph.nodes(data=True) if isinstance(data["obj"], BondDescriptor))
 
     def _assign_stochastic_ids(self):
         self._stochastic_id_map = {-1: -1}
@@ -266,7 +264,7 @@ class GeneratingGraph:
                 set: A set of nodes where the traversal stopped.
 
             """
-            stopped_nodes = set()
+            stopped_nodes = {}       # discovery order, see _create_bd_idx_set
             visited = set()
 
             def dfs(node):
@@ -275,7 +273,7 @@ class GeneratingGraph:
                 visited.add(node)
 
                 if stop_condition(node):
-                    stopped_nodes.add(node)
+                    stopped_nodes[node] = None
                     return  # Stop traversal from this node
 
                 # Continue traversal to neighbors
@@ -469,10 +467,9 @@ class GeneratingGraph:
         # The previous approach does not handle self loops on bond descriptors, since they are cycles.
         # However, these are important and easy manually address
         for bd_idx in bd_idx_set:
-            in_edges = set(graph.in_edges(bd_idx, keys=True))
             out_edges = set(graph.out_edges(bd_idx, keys=True))
             # A loop to itself is the intersection
-            loop_edges = in_edges.intersection(out_edges)
+            loop_edges = [e for e in graph.in_edges(bd_idx, keys=True) if e in out_edges]
             for loop_edge in loop_edges:
                 for in_u, in_v, in_k, in_data in graph.in_edges(bd_idx, keys=True, data=True):
                     if is_static_edge(in_data):

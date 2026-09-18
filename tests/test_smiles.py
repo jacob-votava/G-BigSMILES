@@ -167,3 +167,24 @@ def test_chirality_independent_of_repeat_unit_spelling(unit):
         spelling = spelling.replace("[1*]", "[<]").replace("[2*]", "[>]")
         chains.add(Chem.MolToSmiles(_canonical_chain(f"[H]{{[>]{spelling}[<]}}|uniform(400,400)|[H]")[1]))
     assert len(spellings) > 1 and len(chains) == 1
+
+
+
+def test_same_seed_draws_the_same_chain_in_every_process():
+    # Node ids are random uuids and Python randomises string hashes per process, so any
+    # set iteration during graph construction made seeded sampling irreproducible.
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import numpy as np, gbigsmiles\n"
+        "from rdkit import Chem\n"
+        "bs = 'C=C{[<] [<|8|][C@@H]1C[C@@H]([>|8|])C1, [<|2|][C@@H]1C[C@H]([>|2|])C1 [>]}|uniform(620, 620)|C=C'\n"
+        "g = gbigsmiles.BigSmiles.make(bs).get_generating_graph().get_atom_graph()\n"
+        "rng = np.random.default_rng(0)\n"
+        "print([Chem.MolToSmiles(gbigsmiles.mol_graph_to_rdkit_mol(g.sample_mol_graph(rng=rng))) for _ in range(6)])\n"
+    )
+    draws = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
+                            env={**os.environ, "PYTHONHASHSEED": str(h)}).stdout for h in range(1, 9)}
+    assert len(draws) == 1
