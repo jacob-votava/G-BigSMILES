@@ -136,7 +136,7 @@ def _textual_chain(unit: str, n: int) -> str:
     atom, [>] the following unit), ring digits renumbered per unit.  No atom's SMILES
     neighbour order changes, so the chain's @/@@ are the ground truth."""
     def unit_i(i):
-        text = re.sub(r"(?<=[\]A-Za-z])(\d)", lambda m: f"%{10 * (i + 1) + int(m.group(1))}", unit)
+        text = re.sub(r"(?<=[\]A-Za-z=#/\\])(\d)", lambda m: f"%{10 * (i + 1) + int(m.group(1))}", unit)
         return text.replace("[<]", "").replace("[>]", unit_i(i + 1) if i + 1 < n else "[H]")
     return "[H]" + unit_i(0)
 
@@ -176,6 +176,73 @@ def test_reused_ring_number_matches_textual_substitution(unit, mass):
     reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
     assert n > 1
     assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
+# --- a bond symbol may be written on a ring number, at either end of the closure or at both ----
+
+_RING_BOND_SYMBOL_UNITS = [
+    ("[<]CC(C=1CCCCC=1)[>]", 400),                  # bond order on both ends
+    ("[<]CC(C=1CCCCC1)[>]", 400),                   # on the opening end
+    ("[<]CC(C1CCCCC=1)[>]", 400),                   # on the closing end
+    ("[<]N/N=C1CCCC\\1(C)C(=O)[>]", 500),           # direction on the closing end
+    ("[<]N/N=C1CCCC/1(C)C(=O)[>]", 500),
+    ("[<]N/N=C\\1CCCC1(C)C(=O)[>]", 500),           # direction on the opening end
+    ("[<]N/N=C/1CCCC1(C)C(=O)[>]", 500),
+    ("[<]N/N=C/1CCCC\\1(C)C(=O)[>]", 500),          # on both ends, written consistently
+    # two C=N bonds on one ring, one of them set by the ring closure
+    ("[<]N/N=C1C(=N\\NC(=O)CNC2=CC=CC=C2C([>])=O)\\C(C)(C)CCCC\\1(C)C", 1100),
+]
+
+
+@pytest.mark.parametrize("unit,mass", _RING_BOND_SYMBOL_UNITS)
+def test_bond_symbol_on_ring_number_matches_textual_substitution(unit, mass):
+    Chem, chain = _canonical_chain(f"[H]{{[>]{unit}[<]}}|uniform({mass},{mass})|[H]")
+    n = chain.GetNumHeavyAtoms() // Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]")).GetNumHeavyAtoms()
+    reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
+    assert n > 1
+    assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
+def test_ring_closure_with_two_different_bond_symbols_is_an_error():
+    with pytest.raises(Exception, match="two different bond symbols"):
+        gbigsmiles.BigSmiles.make("[H]{[>][<]CC(C=1CCCCC#1)[>][<]}|uniform(400,400)|[H]").get_generating_graph()
+
+
+# --- / and \ are read in text order, not in the order the chain happens to be assembled --------
+# A repeat unit entered between two marks was built with one of them reversed, which inverted
+# the double bond; the mark now names the atom it is read towards (edge attribute ``bond_dir_to``).
+
+_GEOMETRY_UNITS = [
+    "[<]C/C=C\\C[>]",                    # Z-polybutadiene
+    "[<]C/C=C/C[>]",
+    "[<]N/N=C(\\C)CC([>])=O",            # descriptor in a branch, between the two marks
+    "[<]OC/C=C(/C)C([>])=O",
+    "[<]CC(=N\\C)/C=C/C([>])=O",
+    "[<]C(C)=C/[>]",                     # mark on the bond between two repeat units
+    "[<]N/N=C1CCCC\\1(C)C([>])=O",       # mark on a ring number
+]
+
+
+@pytest.mark.parametrize("unit", _GEOMETRY_UNITS)
+def test_double_bond_geometry_matches_textual_substitution(unit):
+    Chem, chain = _canonical_chain(f"[H]{{[>]{unit}[<]}}|uniform(400,400)|[H]")
+    n = chain.GetNumHeavyAtoms() // Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]")).GetNumHeavyAtoms()
+    reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
+    assert n > 1
+    assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
+@pytest.mark.parametrize("unit", _GEOMETRY_UNITS)
+def test_double_bond_geometry_independent_of_repeat_unit_spelling(unit):
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]"))
+    spellings = {Chem.MolToSmiles(mol, rootedAtAtom=r, canonical=False) for r in range(mol.GetNumAtoms())}
+    chains = set()
+    for spelling in spellings:
+        spelling = spelling.replace("[1*]", "[<]").replace("[2*]", "[>]")
+        chains.add(Chem.MolToSmiles(_canonical_chain(f"[H]{{[>]{spelling}[<]}}|uniform(400,400)|[H]")[1]))
+    assert len(spellings) > 1 and len(chains) == 1
 
 
 @pytest.mark.parametrize("unit", _STEREO_UNITS)

@@ -39,6 +39,9 @@ def mol_graph_to_rdkit_mol(mol_graph):
             chiral_atoms.append(graph_idx)
 
     for u, v, attr in mol_graph.edges(data=True):
+        origin_u, origin_v = (mol_graph.nodes[i].get("origin_idx", i) for i in (u, v))
+        if origin_u == str(attr.get("bond_dir_to")) != origin_v:
+            u, v = v, u  # a / or \ is read towards the atom it was written before
         begin_idx = graph_idx_to_mol_idx[u]
         end_idx = graph_idx_to_mol_idx[v]
         mol.AddBond(begin_idx, end_idx, convert_bond_type(attr))

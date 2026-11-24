@@ -29,6 +29,10 @@ _STATIC_NAME = "static"
 _AROMATIC_NAME = "aromatic"
 _BOND_TYPE_NAME = "bond_type"
 _BOND_DIR_NAME = "bond_dir"
+# Edge attribute: id of the node a / or \ is read towards (the atom it was written before).
+# The mark means the opposite when the bond is read the other way (see nx_rdkit_mol).
+_BOND_DIR_TO_NAME = "bond_dir_to"
+_FLIP_BOND_DIR = {"/": "\\", "\\": "/"}
 _CHIRAL_NAME = "chiral"
 # Edge attribute: {node_id: slot} giving, for each end atom, the position of this bond in
 # that atom's SMILES neighbour order (0 = preceding atom, 1 = implicit H, 2.. = ring bonds,
@@ -114,11 +118,23 @@ class _PartialGeneratingGraph:
         self.ring_bond_map.setdefault(ring_bond.idx, []).append(half_bond)
 
     def close_rings(self) -> None:
-        """Pair each ring number's bonds in text order: first with second, third with fourth."""
+        """Pair each ring number's bonds in text order: first with second, third with fourth.
+        A bond symbol may sit on either end or on both.  A / or \\ on the closing end is read
+        from that atom, so it is flipped to the direction seen from the opening atom."""
         for half_bonds in self.ring_bond_map.values():
             while len(half_bonds) > 1:
                 opening, closing = half_bonds.pop(0), half_bonds.pop(0)
-                self.add_half_bond_edge(closing, opening)
+                attributes = dict(closing.bond_attributes)
+                if _BOND_DIR_NAME in attributes:
+                    attributes[_BOND_DIR_NAME] = _FLIP_BOND_DIR[attributes[_BOND_DIR_NAME]]
+                if _BOND_DIR_NAME in attributes or _BOND_DIR_NAME in opening.bond_attributes:
+                    attributes[_BOND_DIR_TO_NAME] = closing.node_id
+                for name in (_BOND_TYPE_NAME, _BOND_DIR_NAME):
+                    if name in attributes and name in opening.bond_attributes:
+                        if attributes[name] != opening.bond_attributes[name]:
+                            raise ValueError(f"ring closure with two different bond symbols: {opening}, {closing}")
+                        del attributes[name]
+                self.add_half_bond_edge(_HalfBond(closing.node, closing.node_id, attributes, closing.order), opening)
 
     def __str__(self):
         return f"PartialGraph({self.g}, {self.left_half_bonds}, {self.right_half_bonds}, {self.ring_bond_map})"
@@ -313,7 +329,7 @@ class GeneratingGraph:
                 weight = 1.0
                 weight_type_list = []
                 non_static_attribute_list = list(_NON_STATIC_ATTR)
-                for d in self.data_path:
+                for j, d in enumerate(self.data_path):
                     if _STATIC_NAME in d:
                         if _STATIC_NAME in data:
                             data[_STATIC_NAME] &= d[_STATIC_NAME]
@@ -335,9 +351,12 @@ class GeneratingGraph:
                         else:
                             data[_BOND_TYPE_NAME] = d[_BOND_TYPE_NAME]
                     if _BOND_DIR_NAME in d and d[_BOND_DIR_NAME]:
-                        if _BOND_DIR_NAME in data and data[_BOND_DIR_NAME] != d[_BOND_DIR_NAME]:
+                        # the mark is read along the path, so towards one of the two end atoms
+                        towards = last if d.get(_BOND_DIR_TO_NAME) == self.node_path[j + 1] else first
+                        same_way = data.setdefault(_BOND_DIR_TO_NAME, towards) == towards
+                        mark = d[_BOND_DIR_NAME] if same_way else _FLIP_BOND_DIR[d[_BOND_DIR_NAME]]
+                        if data.setdefault(_BOND_DIR_NAME, mark) != mark:
                             return 0.0, None
-                        data[_BOND_DIR_NAME] = d[_BOND_DIR_NAME]
 
                     non_static_weights = [d[attr] if attr in d else 0 for attr in non_static_attribute_list]
                     if max(non_static_weights) > 0:

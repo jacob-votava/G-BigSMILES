@@ -4,7 +4,7 @@ from .big_smiles import _AbstractIterativeGenerativeClass
 from .bond import BondSymbol, RingBond
 from .core import BigSMILESbase, GenerationBase
 from .exception import DoubleBondSymbolDefinition
-from .generating_graph import _BOND_DIR_NAME, _BOND_TYPE_NAME, _PartialGeneratingGraph
+from .generating_graph import _BOND_DIR_NAME, _BOND_DIR_TO_NAME, _BOND_TYPE_NAME, _PartialGeneratingGraph
 
 
 class Branch(BigSMILESbase, GenerationBase):
@@ -58,6 +58,7 @@ class Branch(BigSMILESbase, GenerationBase):
                 lhb.bond_attributes[_BOND_TYPE_NAME] = self._bond_symbol.base_symbol
                 if direction:
                     lhb.bond_attributes[_BOND_DIR_NAME] = direction
+                    lhb.bond_attributes[_BOND_DIR_TO_NAME] = lhb.node_id
 
         for element in self._elements[1:]:
             element_partial_graph = element._generate_partial_graph()
@@ -129,9 +130,14 @@ class BranchedAtom(BigSMILESbase, GenerationBase):
         # in text order.  Every right half bond gets its own slot.
         slot = 2
         # Adding ring bonds
-        for ring_idx in self._ring_bonds:
+        for ring_bond in self._ring_bonds:
             for half_bond in partial_graph.right_half_bonds:
-                partial_graph.add_ring_bond(ring_idx, half_bond.with_order(slot))
+                half_bond = half_bond.with_order(slot)
+                if ring_bond.bond_symbol is not None:
+                    half_bond.bond_attributes[_BOND_TYPE_NAME] = ring_bond.bond_symbol.base_symbol
+                    if ring_bond.bond_symbol.direction:
+                        half_bond.bond_attributes[_BOND_DIR_NAME] = ring_bond.bond_symbol.direction
+                partial_graph.add_ring_bond(ring_bond, half_bond)
             slot += 1
 
         # Adding branches
@@ -203,6 +209,7 @@ class AtomAssembly(BigSMILESbase, GenerationBase):
                 half_bond.bond_attributes[_BOND_TYPE_NAME] = self.bond_symbol.base_symbol
                 if direction:
                     half_bond.bond_attributes[_BOND_DIR_NAME] = direction
+                    half_bond.bond_attributes[_BOND_DIR_TO_NAME] = half_bond.node_id
 
         return partial_graph
 

@@ -22,6 +22,7 @@ from .exception import (
 from .generating_graph import (
     _AROMATIC_NAME,
     _BOND_DIR_NAME,
+    _BOND_DIR_TO_NAME,
     _BOND_TYPE_NAME,
     _CHIRAL_NAME,
     _NBR_ORDER_NAME,
@@ -212,7 +213,7 @@ class _StochasticObjectTracker:
 
 class _PartialAtomGraph:
     _ATOM_ATTRS = {"atomic_num", _AROMATIC_NAME, "charge", _CHIRAL_NAME}
-    _BOND_ATTRS = {_BOND_TYPE_NAME, _AROMATIC_NAME, _BOND_DIR_NAME, _NBR_ORDER_NAME}
+    _BOND_ATTRS = {_BOND_TYPE_NAME, _AROMATIC_NAME, _BOND_DIR_NAME, _BOND_DIR_TO_NAME, _NBR_ORDER_NAME}
 
     def __init__(self, generating_graph, static_graph, source_node, stochastic_tracker, sto_atom_id, rng):
         self._atom_id = 0
@@ -363,7 +364,7 @@ class _PartialAtomGraph:
     @staticmethod
     def _copy_some_dict_attr(dictionary: dict[str, Any], keys_to_copy: set[str]) -> dict[str, Any]:
         new_dict = {}
-        default_map = {_BOND_DIR_NAME: "", _AROMATIC_NAME: False, _CHIRAL_NAME: "", _NBR_ORDER_NAME: {}}
+        default_map = {_BOND_DIR_NAME: "", _BOND_DIR_TO_NAME: "", _AROMATIC_NAME: False, _CHIRAL_NAME: "", _NBR_ORDER_NAME: {}}
         for k in keys_to_copy:
             new_dict[k] = dictionary.get(k, default_map.get(k, 0))
         return new_dict
