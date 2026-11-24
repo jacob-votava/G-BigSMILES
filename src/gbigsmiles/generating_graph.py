@@ -72,12 +72,14 @@ class _PartialGeneratingGraph:
 
         self.left_half_bonds: list[_HalfBond] = []
         self.right_half_bonds: list[_HalfBond] = []
-        self.ring_bond_map: dict[int, _HalfBond] = {}
+        # Unpaired ring bonds per ring number, in text order.  A branch cannot tell whether its
+        # first use of a number closes a ring opened to its left, so pairing waits for `close_rings`.
+        self.ring_bond_map: dict[int, list[_HalfBond]] = {}
 
     def merge(self, other: Self, half_bond_tuples: list[tuple[_HalfBond, _HalfBond]]) -> Self:
         """
         Strictly only merges the graphs, handling of left/right bond halves has to be performed before hand.
-        It does handle the merging of ring bonds though.
+        Ring bonds of `other` are appended after those of `self`, which keeps them in text order.
 
         """
 
@@ -88,15 +90,8 @@ class _PartialGeneratingGraph:
 
         half_bond_tuples = list(half_bond_tuples)
 
-        new_ring_bond_map = self.ring_bond_map
-        for ring_bond_idx in other.ring_bond_map:
-            if ring_bond_idx in new_ring_bond_map:
-                half_bond_tuples.append((new_ring_bond_map[ring_bond_idx], other.ring_bond_map[ring_bond_idx]))
-                del new_ring_bond_map[ring_bond_idx]
-            else:
-                new_ring_bond_map[ring_bond_idx] = other.ring_bond_map[ring_bond_idx]
-
-        self.ring_bond_map = new_ring_bond_map
+        for ring_bond_idx, half_bonds in other.ring_bond_map.items():
+            self.ring_bond_map.setdefault(ring_bond_idx, []).extend(half_bonds)
 
         self.g = nx.union(self.g, other.g)
 
@@ -115,15 +110,15 @@ class _PartialGeneratingGraph:
         }
         self.g.add_edge(self_half_bond_edge.node_id, other_half_bond_edge.node_id, **new_bond_attributes)
 
-    def add_ring_bond(self, ring_bond, half_bond: _HalfBond) -> bool:
+    def add_ring_bond(self, ring_bond, half_bond: _HalfBond) -> None:
+        self.ring_bond_map.setdefault(ring_bond.idx, []).append(half_bond)
 
-        if ring_bond.idx in self.ring_bond_map:
-            self.add_half_bond_edge(half_bond, self.ring_bond_map[ring_bond.idx])
-            del self.ring_bond_map[ring_bond.idx]
-            return False
-
-        self.ring_bond_map[ring_bond.idx] = half_bond
-        return True
+    def close_rings(self) -> None:
+        """Pair each ring number's bonds in text order: first with second, third with fourth."""
+        for half_bonds in self.ring_bond_map.values():
+            while len(half_bonds) > 1:
+                opening, closing = half_bonds.pop(0), half_bonds.pop(0)
+                self.add_half_bond_edge(closing, opening)
 
     def __str__(self):
         return f"PartialGraph({self.g}, {self.left_half_bonds}, {self.right_half_bonds}, {self.ring_bond_map})"
@@ -143,6 +138,7 @@ def _docstring_format(*args, **kwargs):
 class GeneratingGraph:
     def __init__(self, final_partial_graph: _PartialGeneratingGraph, text: str = ""):
         self._partial_graph = final_partial_graph
+        self._partial_graph.close_rings()
         self._graph_without_bond_descriptors = None
         self._g = self._partial_graph.g
         self.text: str = text

@@ -154,6 +154,30 @@ def test_chirality_matches_textual_substitution(unit):
     assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
 
 
+# --- a ring number may be reused once its ring is closed ------------------------------------
+# Inside a branch the first use of a number can close a ring opened before the branch; pairing
+# the branch's own first two uses instead bonds the wrong atoms.
+
+_REUSED_RING_NUMBER_UNITS = [
+    ("[<]CC(C1CCC(C1C1CC1)C)[>]", 400),      # closed and reopened inside a branch
+    ("[<]CC(C1CCCC1C1CC1)[>]", 400),         # reused without a branch
+    ("[<]CC(C1CCC(C1C2CC2)C)[>]", 400),      # the first unit with unique numbers
+    # benzofuran and piperidine: ring 1 is reused while ring 2 is still open
+    ("[<]OC1=CC2=C(C=C1OC(=O)C1(CC([>])=O)CCN(CC3=CC=CC=C3)CC1)OC(C)=C2C(=O)OCC", 1500),
+    # coumarin with a stereocenter between the two uses of ring 1
+    ("[<]OC1=CC2=C(C=C1OC(=O)[C@@H](CC([>])=O)OC(=O)C1=CC=CC=C1)OC(=O)C=C2C", 1200),
+]
+
+
+@pytest.mark.parametrize("unit,mass", _REUSED_RING_NUMBER_UNITS)
+def test_reused_ring_number_matches_textual_substitution(unit, mass):
+    Chem, chain = _canonical_chain(f"[H]{{[>]{unit}[<]}}|uniform({mass},{mass})|[H]")
+    n = chain.GetNumHeavyAtoms() // Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]")).GetNumHeavyAtoms()
+    reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
+    assert n > 1
+    assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
 @pytest.mark.parametrize("unit", _STEREO_UNITS)
 def test_chirality_independent_of_repeat_unit_spelling(unit):
     # Every SMILES spelling of the same repeat unit (rooted at each atom in turn) must give
