@@ -245,6 +245,59 @@ def test_double_bond_geometry_independent_of_repeat_unit_spelling(unit):
     assert len(spellings) > 1 and len(chains) == 1
 
 
+# --- a lone pair is not read like an implicit H -------------------------------------------------
+# RDKit reads the lone pair of a three-neighbour chiral atom as its last neighbour, inverted once
+# per ring-closure digit written on that atom (found by comparing every spelling of small molecules).
+
+_LONE_PAIR_UNITS = [
+    "[<]OCCOC(=O)[C@H]1C[N@]1C(C)(C)C([>])=O",      # aziridine nitrogen closing the ring
+    "[<]NCCNC(=O)C(C)(C)[N@]1C[C@H]1C([>])=O",      # aziridine nitrogen opening the ring
+    "[<]CC[N@]1C[C@H]1C([>])=O",                    # in the backbone
+    "[<]CC[P@](C)CCC([>])=O",                       # no ring digit
+]
+
+
+@pytest.mark.parametrize("unit", _LONE_PAIR_UNITS)
+def test_lone_pair_chirality_matches_textual_substitution(unit):
+    Chem, chain = _canonical_chain(f"[H]{{[>]{unit}[<]}}|uniform(500,500)|[H]")
+    n = chain.GetNumHeavyAtoms() // Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]")).GetNumHeavyAtoms()
+    reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
+    assert n > 1
+    assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
+@pytest.mark.parametrize("unit", _LONE_PAIR_UNITS)
+def test_lone_pair_chirality_independent_of_repeat_unit_spelling(unit):
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]"))
+    spellings = {Chem.MolToSmiles(mol, rootedAtAtom=r, canonical=False) for r in range(mol.GetNumAtoms())}
+    chains = set()
+    for spelling in spellings:
+        spelling = spelling.replace("[1*]", "[<]").replace("[2*]", "[>]")
+        chains.add(Chem.MolToSmiles(_canonical_chain(f"[H]{{[>]{spelling}[<]}}|uniform(500,500)|[H]")[1]))
+    assert len(spellings) > 1 and len(chains) == 1
+
+
+# --- a charged atom bonds like the neutral atom with as many electrons --------------------------
+
+_CHARGED_UNITS = [
+    "[<]CC(C1=CC=C([N+](=O)[O-])C=C1)[>]",          # nitro
+    "[<]CC[N+](C)(C)CC[>]",                         # ammonium
+    "[<]CC(C(=O)[O-])[>]",                          # carboxylate
+    "[<]CC[B-](C)(C)CC[>]",                         # borate
+]
+
+
+@pytest.mark.parametrize("unit", _CHARGED_UNITS)
+def test_charged_atoms_build_and_match_textual_substitution(unit):
+    Chem, chain = _canonical_chain(f"[H]{{[>]{unit}[<]}}|uniform(500,500)|[H]")
+    n = chain.GetNumHeavyAtoms() // Chem.MolFromSmiles(unit.replace("[<]", "[1*]").replace("[>]", "[2*]")).GetNumHeavyAtoms()
+    reference = Chem.RemoveHs(Chem.MolFromSmiles(_textual_chain(unit, n)))
+    assert n > 1
+    assert Chem.MolToSmiles(chain) == Chem.MolToSmiles(reference)
+
+
 @pytest.mark.parametrize("unit", _STEREO_UNITS)
 def test_chirality_independent_of_repeat_unit_spelling(unit):
     # Every SMILES spelling of the same repeat unit (rooted at each atom in turn) must give
@@ -279,3 +332,20 @@ def test_same_seed_draws_the_same_chain_in_every_process():
     draws = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
                             env={**os.environ, "PYTHONHASHSEED": str(h)}).stdout for h in range(1, 9)}
     assert len(draws) == 1
+
+
+def test_ring_centers_that_depend_on_each_other_survive_the_stereo_clean_up():
+    """The four ring centers of this bicycle are stereocenters only relative to each other.
+    RDKit's newer stereo perception keeps two to four of them depending on atom order."""
+    Chem = pytest.importorskip("rdkit.Chem")
+    unit = "[>]O[C@H]1N(C)[C@H]2[C@H](N1C)N(C)[C@H](OC(=O)CCC([<])=O)N2C"
+    legacy = Chem.GetUseLegacyStereoPerception()
+    Chem.SetUseLegacyStereoPerception(False)
+    try:
+        graph = gbigsmiles.BigSmiles.make(f"[H]{{[>]{unit}[<]}}|uniform(1500,1500)|[H]").get_generating_graph().get_atom_graph()
+        chain = gbigsmiles.mol_graph_to_rdkit_mol(graph.sample_mol_graph(rng=np.random.default_rng(0)))
+    finally:
+        Chem.SetUseLegacyStereoPerception(legacy)
+    units = sum(a.GetSymbol() == "N" for a in chain.GetAtoms()) // 4
+    tagged = sum(a.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED for a in chain.GetAtoms())
+    assert units > 1 and tagged == 4 * units

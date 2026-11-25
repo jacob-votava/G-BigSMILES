@@ -56,13 +56,48 @@ def mol_graph_to_rdkit_mol(mol_graph):
         _set_chiral_tag(mol, mol_graph, graph_idx, graph_idx_to_mol_idx, _CHIRAL_MAP)
 
     Chem.SanitizeMol(mol)
-    Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
+    _assign_stereo(mol)
     return mol
+
+
+def _assign_stereo(mol):
+    """RDKit's stereo clean-up clears chiral tags from atoms that are not stereocenters, but
+    among centers that depend on each other (a symmetric fused ring) it also drops real ones
+    for some atom orders.  A dropped tag goes back when the atom is a center by topology and
+    the CIP labeler, which is exact, still labels it; a chain too large for the labeler keeps
+    every such tag."""
+    from rdkit import Chem
+    from rdkit.Chem import rdCIPLabeler
+
+    unset = Chem.ChiralType.CHI_UNSPECIFIED
+    tags = {a.GetIdx(): a.GetChiralTag() for a in mol.GetAtoms() if a.GetChiralTag() != unset}
+    Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
+    dropped = {i for i in tags if mol.GetAtomWithIdx(i).GetChiralTag() == unset}
+    if dropped:
+        bare = Chem.AddHs(mol)
+        for atom in bare.GetAtoms():
+            atom.SetChiralTag(unset)
+        possible = {e.centeredOn for e in Chem.FindPotentialStereo(bare) if e.type == Chem.StereoType.Atom_Tetrahedral}
+        dropped = sorted(dropped & possible)
+    if not dropped:
+        return
+    probe = Chem.Mol(mol)
+    for i, tag in tags.items():
+        probe.GetAtomWithIdx(i).SetChiralTag(tag)
+    try:
+        rdCIPLabeler.AssignCIPLabels(probe, dropped, None, 1_250_000)
+        dropped = [i for i in dropped if probe.GetAtomWithIdx(i).HasProp("_CIPCode")]
+    except Exception:  # too many nodes or iterations
+        pass
+    for i in dropped:
+        mol.GetAtomWithIdx(i).SetChiralTag(tags[i])
+    Chem.AssignStereochemistry(mol, cleanIt=False, force=True)
 
 
 def _set_chiral_tag(mol, mol_graph, graph_idx, graph_idx_to_mol_idx, chiral_map):
     """@/@@ is defined relative to the atom's SMILES neighbour order, while RDKit reads a
     chiral tag relative to the order of the atom's bonds (an implicit H counting last).
+    A lone pair is not read like an implicit H: see the three-neighbour case below.
     The bonds here were added in graph order, so translate: sort the bonds by their SMILES
     slot (edge attribute ``nbr_order``) and invert the tag when that permutation is odd."""
     from rdkit import Chem
@@ -76,17 +111,22 @@ def _set_chiral_tag(mol, mol_graph, graph_idx, graph_idx_to_mol_idx, chiral_map)
         .get(data.get("origin_idx", graph_idx))
         for bond in atom.GetBonds()
     ]
-    tag = chiral_map[data["chiral"]]
+    tag, invert = chiral_map[data["chiral"]], False
     if None in slots or len(slots) not in (3, 4):
         import warnings
 
         warnings.warn(f"Cannot resolve the neighbour order of chiral atom {graph_idx}; its chiral tag is set as written and may be inverted.", stacklevel=3)
     else:
         if len(slots) == 3:
-            slots.append(1)  # implicit H (or lone pair): SMILES slot 1, last in RDKit's order
+            atom.UpdatePropertyCache(strict=False)
+            if atom.GetTotalNumHs():
+                slots.append(1)  # implicit H: SMILES slot 1, last in RDKit's order
+            else:  # lone pair: RDKit reads it last, inverted once per ring-closure digit on the atom
+                invert = sum(1 < slot < 2 for slot in slots) % 2 == 1
+                slots.append(max(slots) + 1)
         ranks = sorted(slots)
         perm = [ranks.index(s) for s in slots]
-        if _permutation_is_odd(perm):
+        if _permutation_is_odd(perm) != invert:
             tag = Chem.ChiralType.CHI_TETRAHEDRAL_CW if tag == Chem.ChiralType.CHI_TETRAHEDRAL_CCW else Chem.ChiralType.CHI_TETRAHEDRAL_CCW
     atom.SetChiralTag(tag)
 

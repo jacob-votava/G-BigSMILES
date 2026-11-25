@@ -126,19 +126,18 @@ class BranchedAtom(BigSMILESbase, GenerationBase):
     def _generate_partial_graph(self) -> _PartialGeneratingGraph:
         partial_graph = self._atom_stand_in._generate_partial_graph()
         # SMILES neighbour order (what @/@@ refers to): the preceding atom (slot 0, the left
-        # half bond), an implicit H (slot 1), then ring bonds, branches and the following atom
-        # in text order.  Every right half bond gets its own slot.
+        # half bond), an implicit H (slot 1), then ring bonds (slots between 1 and 2, which
+        # also marks them as ring bonds), branches and the following atom in text order.
         slot = 2
         # Adding ring bonds
-        for ring_bond in self._ring_bonds:
+        for i, ring_bond in enumerate(self._ring_bonds, 1):
             for half_bond in partial_graph.right_half_bonds:
-                half_bond = half_bond.with_order(slot)
+                half_bond = half_bond.with_order(1 + i / (len(self._ring_bonds) + 1))
                 if ring_bond.bond_symbol is not None:
                     half_bond.bond_attributes[_BOND_TYPE_NAME] = ring_bond.bond_symbol.base_symbol
                     if ring_bond.bond_symbol.direction:
                         half_bond.bond_attributes[_BOND_DIR_NAME] = ring_bond.bond_symbol.direction
                 partial_graph.add_ring_bond(ring_bond, half_bond)
-            slot += 1
 
         # Adding branches
         for branch in self._branches:
