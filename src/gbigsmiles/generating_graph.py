@@ -35,8 +35,8 @@ _BOND_DIR_TO_NAME = "bond_dir_to"
 _FLIP_BOND_DIR = {"/": "\\", "\\": "/"}
 _CHIRAL_NAME = "chiral"
 # Edge attribute: {node_id: slot} giving, for each end atom, the position of this bond in
-# that atom's SMILES neighbour order (0 = preceding atom, 1 = implicit H, 2.. = ring bonds,
-# branches and the following atom in text order).  Chirality (@/@@) is defined relative to
+# that atom's SMILES neighbour order (0 = preceding atom, 1 = implicit H, between 1 and 2 = ring
+# bonds, 2.. = branches and the following atom, all in text order).  Chirality (@/@@) is defined relative to
 # that order, so an RDKit molecule built with bonds in any other order needs it to set the
 # tag correctly (see nx_rdkit_mol).
 _NBR_ORDER_NAME = "nbr_order"

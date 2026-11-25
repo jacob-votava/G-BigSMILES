@@ -320,7 +320,9 @@ class _PartialAtomGraph:
             half_bond = _HalfAtomBond(self._atom_id, node_idx, self.generating_graph, rng)
 
             atom_total_bond = self._compute_total_bond(node_idx)
-            self.stochastic_tracker.add_molw(sto_atom_id, atomic_masses[data["atomic_num"]], default_valence[data["atomic_num"]], atom_total_bond)
+            # a charged atom bonds like the neutral atom with as many electrons: [N+] like C, [O-] like F
+            valence = default_valence.get(data["atomic_num"] - data["charge"], 0)
+            self.stochastic_tracker.add_molw(sto_atom_id, atomic_masses[data["atomic_num"]], valence, atom_total_bond)
             self._atom_id += 1
 
             if half_bond.weight > 0 and half_bond.has_any_bonds():
